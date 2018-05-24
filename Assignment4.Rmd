@@ -26,41 +26,24 @@ Step 1: Reproduce the meta-analysis of pitch sd from previous studies of voice i
 - Since we're only interested in getting a meta-analytic effect size, let's take a shortcut and use bromance magic (brms): https://mvuorre.github.io/post/2016/2016-09-29-bayesian-meta-analysis/
 
 ```{r}
-install.packages("readxl")
-library("readxl")
-library("brms")
-library("rethinking")
+#devtools::install_github("mvuorre/brmstools")
+pacman::p_load(readxl, brms,rethinking,tidyverse,brmstools)
 
 d_meta = read_excel("Assignment4MetaData.xlsx")
 d_p = read_excel("Assignment4PitchDatav2.xlsx")
 
 d_m = d_meta
-d_m$StudyID = as.factor(d_m$StudyID)
+d_m$StudyRef = as.factor(d_m$StudyRef)
 
 #change multiple columns to numeric
 #cols.num <- c("","b")
 #DF[cols.num] <- sapply(DF[cols.num],as.numeric)
 #sapply(DF, class)
 
-m = brm(MeanES ~ 1,
-        data = d_m,
-        cores = 2,
-        chains = 2,
-        iter = 2000)
-m
-plot(m)
-
-m1 = brm(MeanES ~ 1 + (1|StudyID),
-        data = d_m,
-        cores = 2,
-        chains = 2,
-        iter = 2000)
-m1
-
-d = subset(d_m, select=c(StudyID, MeanES, SdES))
+d = subset(d_m, select=c(StudyRef, MeanES, SdES))
 d = d[complete.cases(d),]
 
-m2 = brm(MeanES|se(SdES) ~ 1 + (1|StudyID),
+m2 = brm(MeanES|se(SdES) ~ 1 + (1|StudyRef),
         data = d,
         cores = 2,
         chains = 2,
@@ -68,6 +51,7 @@ m2 = brm(MeanES|se(SdES) ~ 1 + (1|StudyID),
         warmup = 2500)
 m2
 plot(m2)
+forest(m2)
 
 ```
 
@@ -93,54 +77,98 @@ Step 3: Build a regression model predicting Pitch SD from Diagnosis.
 - Describe and plot the estimates. Evaluate model quality
 
 ```{r}
-model <- map2stan(
-  alist(
-    PitchSD ~ dnorm(mu,sigma), #likelihood
-    mu <- a + b*diagnosis, #linear model
-    a ~ dnorm(0, 1), 
-    b ~ dnorm(0, 0.1),
-    sigma ~ cauchy(0, 2) 
-  ) ,
-  data = d_p,
-  iter = 5000,
-  cores = 3,
-  warmup = 2500,
-  chains = 2
+#Create list of prios
+priorlist = c(
+  prior(normal(0,1), class = Intercept),
+  prior(normal(0,0.1), class = b, coef = diagnosis), #conservative sd
+  prior(cauchy(0,2), class = sigma)
 )
-model
 
-model2 <- map2stan(
-  alist(
-    PitchSD ~ dnorm(mu,sigma), #likelihood
-    mu <- a + b*diagnosis, #linear model
-    a ~ dnorm(0, 1), 
-    b ~ dnorm(0, 0.1), ##b ~  dnorm(-.6 (int), .3(SE)) - meta-analytical prior
-    sigma ~ cauchy(0, 2) 
-  ) ,
+model <- brm(
+    PitchSD ~ diagnosis,
   data = d,
+  prior = priorlist,
   iter = 5000,
   cores = 3,
   warmup = 2500,
   chains = 2
 )
 model
-model2
 
-plot(model)
+#Include WAIC
+m = add_ic(model, ic = "waic")
 
-precis(model, corr = T)
-precis_plot(precis(model, corr = T))
+#Get output
+m
+#Plot output
+plot(m)
+dens(posterior_samples(m)$b_diagnosis)
+
+#Quality check
+pp_check(m, nsamples = 100)
 ```
 
 
 Step 4: Now re-run the model with the meta-analytic prior
 - Describe and plot the estimates. Evaluate model quality
 
+```{r}
+fixef(m2)[1]
+fixef(m2)[2]
+
+#Create list of prios
+priors.meta = c(
+  prior(normal(0,1), class = Intercept),
+  prior(normal(-0.5466154, 0.2347825), class = b, coef = diagnosis),
+  prior(cauchy(0,2), class = sigma)
+)
+
+
+#Run model with meta analytic priors
+m_meta <- brm( PitchSD ~ diagnosis, 
+               data = d, 
+               prior = priors.meta,
+               iter = 5000, 
+               warmup = 2500, 
+               chain = 2, 
+               cores = 3)
+#Include WAIC
+m_meta = add_ic(m_meta, ic = "waic")
+
+#Get output
+m_meta
+plot(m_meta)
+dens(posterior_samples(m_meta)$b_diagnosis)
+
+#plot posterior
+post_samples <- c(posterior_samples(m)$b_diagnosis, posterior_samples(m_meta)$b_diagnosis)
+post_df <- data.frame(post_samples = post_samples, model = c(rep("sceptical", 1000),
+                                                              rep("meta", 1000)
+                                                                   ))
+ggplot(post_df, aes(x = post_samples, color = model)) + geom_density()+theme_classic()
+
+#Quality check
+pp_check(m_meta, nsamples = 100)
+
+#Compare priors
+dens(rnorm(c(0:1000000),0,0.1), col = "red", xlim = c(-1.5, 1), ylim = c(0,5), xlab = "Effect size")
+par(new = T)
+dens(rnorm(c(0:1000000),-0.5466154,0.2347825), xlim = c(-1.5, 1), ylim = c(0,5), xlab = "Effect size")
+```
+
+
 Step 5: Compare the models
 - Plot priors and posteriors of the diagnosis effect in both models
 - Compare posteriors between the two models
 - Compare their relative distance from truth (WAIC)
 - Discuss how they compare and whether any of them is best.
+
+```{r}
+#waic
+waic <- brms::WAIC(model, m_meta)
+waic
+```
+
 
 Step 6: Prepare a nice write up of the analysis and answer the questions at the top.
 
