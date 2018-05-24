@@ -103,6 +103,8 @@ m
 #Plot output
 plot(m)
 dens(posterior_samples(m)$b_diagnosis)
+stanplot(model)
+
 
 #Quality check
 pp_check(m, nsamples = 100)
@@ -146,6 +148,8 @@ post_df <- data.frame(post_samples = post_samples, model = c(rep("sceptical", 10
                                                               rep("meta", 1000)
                                                                    ))
 ggplot(post_df, aes(x = post_samples, color = model)) + geom_density()+theme_classic()
+
+stanplot(m_meta)
 
 #Quality check
 pp_check(m_meta, nsamples = 100)
